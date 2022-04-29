@@ -29,7 +29,7 @@ namespace EphemeralIndexingService
 
                 CheckDynamicIndexes();
 
-                await Task.Delay(1000, stoppingToken);
+                await Task.Delay(1000 * 3, stoppingToken);
             }
         }
 

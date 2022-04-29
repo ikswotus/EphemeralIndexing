@@ -9,13 +9,18 @@ namespace EphemeralIndexingService
 {
     public class Program
     {
-        public static void Main(string[] args)
+        public static async Task<int> Main(string[] args)
         {
-            CreateHostBuilder(args).Build().Run();
+            await CreateHostBuilder(args).Build().RunAsync();
+            return 0;
         }
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
             Host.CreateDefaultBuilder(args)
+            .UseWindowsService(options =>
+            {
+                options.ServiceName = "EphemeralIndexing Service";
+            })
                 .ConfigureServices((hostContext, services) =>
                 {
                     services.AddHostedService<IndexingService>();
