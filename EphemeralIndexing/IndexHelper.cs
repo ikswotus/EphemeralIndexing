@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Collections.Generic;
 
 namespace EphemeralIndexing
@@ -115,6 +116,35 @@ namespace EphemeralIndexing
         }
 
         /// <summary>
+        /// Returns a mapping of timescale chunks to the main table
+        /// </summary>
+        /// <param name="connectionString">DB connection string</param>
+        /// <param name="hypertables">Tables to limit by</param>
+        /// <returns>Pairing of chunkName to tableName</returns>
+        public static Dictionary<string, string> ChunkToRegularLimited(string connectionString, IEnumerable<String> hypertables)
+        {
+            Dictionary<string, string> map = new Dictionary<string, string>();
+
+            using (Npgsql.NpgsqlConnection conn = new Npgsql.NpgsqlConnection(connectionString))
+            {
+                conn.Open();
+
+                string limitedChunks = String.Format(GetAllChunksLimited, String.Join(',', hypertables.Select(s => '\'' + s + '\'')));
+
+                Npgsql.NpgsqlCommand comm = new Npgsql.NpgsqlCommand(limitedChunks, conn);
+                using (Npgsql.NpgsqlDataReader reader = comm.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        map[reader.GetString(1)] = reader.GetString(0);
+                    }
+                }
+            }
+
+            return map;
+        }
+
+        /// <summary>
         /// Drops an index
         /// </summary>
         /// <param name="connectionString">DB connection string</param>
@@ -156,7 +186,7 @@ namespace EphemeralIndexing
             if (!chunkName.StartsWith("_hyper"))
                 throw new ArgumentException("Chunk name does not appear to be a hypertable chunk", chunkName);
 
-            string fullIndexName = $"ephemeral{indexName}_{chunkName}";
+            string fullIndexName = $"ephemeral_hyper_{indexName}_{chunkName}";
 
             using (Npgsql.NpgsqlConnection conn = new Npgsql.NpgsqlConnection(connectionString))
             {
@@ -179,7 +209,7 @@ namespace EphemeralIndexing
         /// {2} index columns
         /// {3} optional - predicate for partial index
         /// </summary>
-        public static readonly string CreateEphemeralIndexFormat = @"CREATE INDEX {0} ON _timescaledb_internal.{1} USING BTREE ({2}) TABLESPACE dyn_idx {3};";
+        public static readonly string CreateEphemeralIndexFormat = @"CREATE INDEX {0} ON _timescaledb_internal.{1} USING BTREE ({2}) TABLESPACE eph_idx {3};";
 
         /// <summary>
         /// Drops an index named {0}
@@ -201,12 +231,21 @@ namespace EphemeralIndexing
 inner join _timescaledb_catalog.hypertable on hypertable.id = hypertable_id;";
 
         /// <summary>
+        /// Retrieve the 'regular' table and all chunks associated with it.
+        /// Restricted by a table check
+        /// </summary>
+        public static readonly string GetAllChunksLimited = @"select concat(hypertable.schema_name, '.', hypertable.table_name) as regular_table,
+    concat(chunk.schema_name, '.', chunk.table_name) as chunk_table from _timescaledb_catalog.chunk
+inner join _timescaledb_catalog.hypertable on hypertable.id = hypertable_id
+WHERE  concat(hypertable.schema_name, '.', hypertable.table_name) in ({0});";
+
+        /// <summary>
         /// Retrieves indexes starting with 'ephemeral_hyper'.
         /// Format for indexes we create will be prefixed with 'ephemeral', followed by the chunk name
         /// which currently means '_hyper...' will be next.
         /// select concat('_timescaledb_internal', '.', table_name), indexname from pg_indexes where indexname like 'ephemeral_hyper%';
         /// </summary>
-        public static readonly string GetEphemeralIndexes = @"select concat('_timescaledb_internal', '.', table_name), indexname from pg_indexes where indexname like 'ephemeral_hyper%';";
+        public static readonly string GetEphemeralIndexes = @"select concat('_timescaledb_internal', '.', tablename), indexname from pg_indexes where indexname like 'ephemeral_hyper%';";
 
         /// <summary>
         /// Retrieve chunk names for a hypertable. Order by chunk name which *SHOULD* give us time ordering

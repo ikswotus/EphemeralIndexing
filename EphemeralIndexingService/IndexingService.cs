@@ -91,6 +91,7 @@ namespace EphemeralIndexingService
                     return;// TODO: nothing to do unless we need to prune any removed indexes...
                 }
 
+                bool updatedChunkList = false;
                 // Get the chunks for all tables from the database
                 // 
                 // TODO: 1 ) ChunkToRegular should only map chunks for active hypertables we're going to index...we dont need everything here
@@ -103,7 +104,9 @@ namespace EphemeralIndexingService
                 {
                     _logger.LogDebug("Getting latest chunk map");
 
-                    _chunkMap = EphemeralIndexing.IndexHelper.ChunkToRegular(connectionString);
+                    IEnumerable<String> activeHypertables = _options.Options.Where(r => r.Enabled).Select(s => s.Hypertable);
+
+                    _chunkMap = EphemeralIndexing.IndexHelper.ChunkToRegularLimited(connectionString, activeHypertables);
                     _indices.Clear();
                     List<Tuple<string, string>> currentIndexes = EphemeralIndexing.IndexHelper.GetAllEphemeralIndexes(connectionString);
                     foreach(Tuple<string, string> tup in currentIndexes)
@@ -113,7 +116,7 @@ namespace EphemeralIndexingService
                         i.IndexName = tup.Item2;
                         if (_chunkMap.ContainsKey(tup.Item1))
                         {
-                            i.TableName = _chunkMap[tup.Item2];
+                            i.TableName = _chunkMap[tup.Item1];
                         }
                         else
                         {
@@ -122,9 +125,15 @@ namespace EphemeralIndexingService
                         }
                         _indices.Add(i);
                     }
-
+                    updatedChunkList = true;
                     _lastChunkCheck = DateTime.UtcNow;
                 }
+
+                if(!updatedChunkList)
+                {
+                    _logger.LogTrace("No new chunks detected - skipping index checks");
+                    return;
+                }    
 
                 // Walk any active index, and see if we've indexed all the recent chunks
                 // This will also remove indices that have exceeded our age time.
@@ -145,7 +154,7 @@ namespace EphemeralIndexingService
                         // First, cleanup any old indices
                         // Match by both hypertable and friendly index name to allow multiple indexes on the same hypertable
                         IEnumerable<EphemeralIndexing.ActiveIndex> matching = _indices.Where(t => String.Equals(t.TableName, activeOpts.Hypertable, StringComparison.OrdinalIgnoreCase) &&
-                            t.IndexName.EndsWith(activeOpts.IndexName, StringComparison.OrdinalIgnoreCase));
+                            t.IndexName.IndexOf(activeOpts.IndexName, StringComparison.OrdinalIgnoreCase) != -1);
                         HashSet<string> hadIndex = new HashSet<string>();
                         foreach(EphemeralIndexing.ActiveIndex index in matching.ToArray())
                         {
@@ -160,6 +169,7 @@ namespace EphemeralIndexingService
                             }
                             else
                             {
+                                _logger.LogTrace("Chunk " + index.ChunkName + " already indexed by: " + index.IndexName);
                                 hadIndex.Add(index.ChunkName);
                             }
                         }
@@ -167,17 +177,18 @@ namespace EphemeralIndexingService
 
                         // Setup new index
                         List<string> chunks = EphemeralIndexing.IndexHelper.GetChunks(connectionString, activeOpts.Hypertable);
-                        // Walk in reverse since newest chunks are at end and we can stop early
-                        for(int i = chunks.Count - 1; i >= 0; i--)
+                        // Chunks should now be ordered
+                        for(int i = 0; i < chunks.Count; i++)
                         {
                             if (hadIndex.Contains(chunks[i]))
                                 continue;// already indexed + still valid
                             DateTime newest = EphemeralIndexing.IndexHelper.GetNewestDate(connectionString, chunks[i], activeOpts.TimeColumn);
                             if (newest.Add(activeOpts.AgeToIndex) < DateTime.UtcNow)
                                 break;// All chunks are indexed
-                            _logger.LogInformation("Creating new index for chunk: " + chunks[i]);
+                           
                             string c = chunks[i].Substring(chunks[i].IndexOf('.') + 1);
                             string idx = EphemeralIndexing.IndexHelper.CreateIndex(connectionString, c, activeOpts.IndexName, activeOpts.IndexCriteria, activeOpts.Predicate);
+                            _logger.LogInformation("Created index " + idx + " for chunk: " + chunks[i]);
                             _indices.Add(new EphemeralIndexing.ActiveIndex() { ChunkName = chunks[i], TableName = activeOpts.Hypertable, IndexName = idx });
                         }
                     }
