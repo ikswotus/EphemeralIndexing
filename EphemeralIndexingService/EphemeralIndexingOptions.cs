@@ -4,6 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using System.Xml;
+using System.Xml.Serialization;
+using System.IO;
+
 namespace EphemeralIndexingService
 {
     /// <summary>
@@ -27,12 +31,12 @@ namespace EphemeralIndexingService
         public bool Enabled { get; set; }
 
         /// <summary>
-        /// Partial index name used to identify a set of indexes
+        ///  Partial index name used to identify a set of indexes
         /// </summary>
         public string IndexName { get; set; }
 
         /// <summary>
-        /// Columns for index
+        ///  Columns for index, comma-separated
         /// </summary>
         public string IndexCriteria { get; set; }
 
@@ -55,5 +59,39 @@ namespace EphemeralIndexingService
         /// Optional - where predicate for partial indexes
         /// </summary>
         public string Predicate { get; set; }
+    }
+
+    public class ConfiguredOptions
+    {
+        public ConfiguredOptions()
+        {
+            Options = new List<EphemeralIndexingOptions>();
+            ConnectionString = String.Empty;
+        }
+
+        public string ConnectionString { get; set; }
+
+        public List<EphemeralIndexingOptions> Options { get; set; }
+    }
+
+
+    public static class OptionsHelper
+    {
+        public static XmlSerializer _xs = new XmlSerializer(typeof(ConfiguredOptions));
+
+        public static ConfiguredOptions FromFile(string file)
+        {
+            using (FileStream fs = File.OpenRead(file))
+            {
+                return (ConfiguredOptions)_xs.Deserialize(fs);
+            }
+        }
+        public static void ToFile(ConfiguredOptions options, string file)
+        {
+            using (FileStream fs = File.Create(file))
+            {
+                _xs.Serialize(fs, options);
+            }
+        }
     }
 }

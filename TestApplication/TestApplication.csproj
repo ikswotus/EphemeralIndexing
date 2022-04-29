@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\EphemeralIndexingService\EphemeralIndexingService.csproj" />
     <ProjectReference Include="..\EphemeralIndexing\EphemeralIndexing.csproj" />
   </ItemGroup>
 

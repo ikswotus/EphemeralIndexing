@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
 
 namespace EphemeralIndexingService
 {
@@ -12,9 +13,12 @@ namespace EphemeralIndexingService
     {
         private readonly ILogger<IndexingService> _logger;
 
+        private readonly string _optionsPath;
+
         public IndexingService(ILogger<IndexingService> logger)
         {
             _logger = logger;
+            _optionsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "options.xml");
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -22,6 +26,9 @@ namespace EphemeralIndexingService
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+
+                CheckDynamicIndexes();
+
                 await Task.Delay(1000, stoppingToken);
             }
         }
@@ -32,29 +39,70 @@ namespace EphemeralIndexingService
 
         private List<EphemeralIndexing.ActiveIndex> _indices = new List<EphemeralIndexing.ActiveIndex>();
 
+        private ConfiguredOptions _options = null;
+        private DateTime _lastOptionsLoad = DateTime.MinValue;
+
         /// <summary>
         /// Look for old indices and sets up new ones on the configured options
         /// 
         /// TODO: Drop ephemeral indexes that arent in our criteria? Orphaned/Abandoned...
         /// </summary>
         /// <param name="connectionString"></param>
-        public void CheckDynamicIndexes(string connectionString)
+        public void CheckDynamicIndexes()
         {
             try
             {
-                // TODO: need to get config file from somewhere
-
-                List<EphemeralIndexingOptions> opts = new List<EphemeralIndexingOptions>();
-
-                if(opts == null || opts.Count == 0)
+                if(!File.Exists(_optionsPath))
                 {
-                    return;// nothing to do unless we need to prune any existing...
+                    _logger.LogError("No options file found");
+                    return;
+                }
+                // New options?
+                DateTime lwt = File.GetLastWriteTimeUtc(_optionsPath);
+                if(_options == null || (lwt - _lastOptionsLoad).TotalSeconds > 1)
+                {
+                    // Reload options
+                    try
+                    {
+                        _options = OptionsHelper.FromFile(_optionsPath);
+                        _lastOptionsLoad = lwt;
+                    }
+                    catch(Exception exc)
+                    {
+                        _logger.LogError("Failed to load options: " + exc);
+                        if (_options == null)
+                            return; // else use old options for now
+                    }
+                }
+                string connectionString = _options.ConnectionString;
+                if(String.IsNullOrEmpty(connectionString))
+                {
+                    _logger.LogError("No connection string");
+                    return;
                 }
 
-                // TODO: Works if we're chunked on hours...might want to just run every x minutes
+                // TODO: need to get config file from somewhere
+
+             
+
+                if(_options.Options == null || _options.Options.Count == 0)
+                {
+                    _logger.LogError("No configured indexes");
+                    return;// TODO: nothing to do unless we need to prune any removed indexes...
+                }
+
+                // Get the chunks for all tables from the database
+                // 
+                // TODO: 1 ) ChunkToRegular should only map chunks for active hypertables we're going to index...we dont need everything here
+                //
+                //
+                // TODO: 2 ) Re-checking on hour change only works for hourly chunks, may need to check every few minutes? This shouldn't be
+                // too terribly expensive. The most expensive check will be rows/dates from actual chunk tables
+                // but we could diff any new/removed indices and only perform that on a change.
                 if(_lastChunkCheck == DateTime.MinValue || _lastChunkCheck.Hour != DateTime.UtcNow.Hour)
                 {
                     _logger.LogDebug("Getting latest chunk map");
+
                     _chunkMap = EphemeralIndexing.IndexHelper.ChunkToRegular(connectionString);
                     _indices.Clear();
                     List<Tuple<string, string>> currentIndexes = EphemeralIndexing.IndexHelper.GetAllEphemeralIndexes(connectionString);
@@ -78,7 +126,11 @@ namespace EphemeralIndexingService
                     _lastChunkCheck = DateTime.UtcNow;
                 }
 
-                foreach(EphemeralIndexingOptions activeOpts in opts.Where(e => e.Enabled))
+                // Walk any active index, and see if we've indexed all the recent chunks
+                // This will also remove indices that have exceeded our age time.
+
+                // TODO: Support removing when disabled/missing? Not hard to get all dynamic indexes and verify
+                foreach(EphemeralIndexingOptions activeOpts in _options.Options.Where(e => e.Enabled))
                 {
                     try
                     {
@@ -111,6 +163,8 @@ namespace EphemeralIndexingService
                                 hadIndex.Add(index.ChunkName);
                             }
                         }
+
+
                         // Setup new index
                         List<string> chunks = EphemeralIndexing.IndexHelper.GetChunks(connectionString, activeOpts.Hypertable);
                         // Walk in reverse since newest chunks are at end and we can stop early
