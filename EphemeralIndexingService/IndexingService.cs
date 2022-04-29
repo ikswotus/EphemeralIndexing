@@ -38,6 +38,8 @@ namespace EphemeralIndexingService
         private Dictionary<string, string> _chunkMap = null;
 
         private List<EphemeralIndexing.ActiveIndex> _indices = new List<EphemeralIndexing.ActiveIndex>();
+        private Dictionary<string, EphemeralIndexing.ActiveIndex> _allIndices = new Dictionary<string, EphemeralIndexing.ActiveIndex>();
+
 
         private ConfiguredOptions _options = null;
         private DateTime _lastOptionsLoad = DateTime.MinValue;
@@ -85,10 +87,10 @@ namespace EphemeralIndexingService
 
              
 
-                if(_options.Options == null || _options.Options.Count == 0)
+                if(_options.Options == null)
                 {
                     _logger.LogError("No configured indexes");
-                    return;// TODO: nothing to do unless we need to prune any removed indexes...
+                    return;
                 }
 
                 bool updatedChunkList = false;
@@ -102,28 +104,34 @@ namespace EphemeralIndexingService
                 // but we could diff any new/removed indices and only perform that on a change.
                 if(_lastChunkCheck == DateTime.MinValue || _lastChunkCheck.Hour != DateTime.UtcNow.Hour)
                 {
-                    _logger.LogDebug("Getting latest chunk map");
+                    // Get all current indexes
+                    _allIndices.Clear();
 
-                    IEnumerable<String> activeHypertables = _options.Options.Where(r => r.Enabled).Select(s => s.Hypertable);
-
-                    _chunkMap = EphemeralIndexing.IndexHelper.ChunkToRegularLimited(connectionString, activeHypertables);
-                    _indices.Clear();
                     List<Tuple<string, string>> currentIndexes = EphemeralIndexing.IndexHelper.GetAllEphemeralIndexes(connectionString);
-                    foreach(Tuple<string, string> tup in currentIndexes)
+                    foreach (Tuple<string, string> tup in currentIndexes)
                     {
                         EphemeralIndexing.ActiveIndex i = new EphemeralIndexing.ActiveIndex();
                         i.ChunkName = tup.Item1;
                         i.IndexName = tup.Item2;
-                        if (_chunkMap.ContainsKey(tup.Item1))
+                        _allIndices.Add(tup.Item1, i);
+                    }
+
+                    if (_options.Options.Any(r => r.Enabled))
+                    {
+                        _logger.LogDebug("Getting latest chunk map");
+
+                        IEnumerable<String> activeHypertables = _options.Options.Where(r => r.Enabled).Select(s => s.Hypertable);
+
+                        _chunkMap = EphemeralIndexing.IndexHelper.ChunkToRegularLimited(connectionString, activeHypertables);
+
+                        // Populate active
+                        foreach(string t in _chunkMap.Keys)
                         {
-                            i.TableName = _chunkMap[tup.Item1];
+                            if (_allIndices.ContainsKey(t))
+                                _allIndices[t].TableName = _chunkMap[t];
                         }
-                        else
-                        {
-                            _logger.LogError("Failed to locate table for chunk: " + tup.Item1);
-                            continue;// skip it
-                        }
-                        _indices.Add(i);
+
+                     
                     }
                     updatedChunkList = true;
                     _lastChunkCheck = DateTime.UtcNow;
@@ -133,13 +141,61 @@ namespace EphemeralIndexingService
                 {
                     _logger.LogTrace("No new chunks detected - skipping index checks");
                     return;
-                }    
+                }
+
+                // Cleanup any removed indices
+                foreach(string chunk in _allIndices.Keys)
+                {
+                    if (String.IsNullOrEmpty(_allIndices[chunk].TableName))
+                    {
+                        _logger.LogDebug("Removing index " + _allIndices[chunk].IndexName + " from chunk " + chunk + " because it is no longer an active hypertable");
+
+                        EphemeralIndexing.IndexHelper.DropIndex(connectionString, _allIndices[chunk].IndexName);
+                        
+                        // Rather than modify the collection, set this as a flag to indicate its been removed.
+                        _allIndices[chunk].IndexName = null;
+                    }
+
+                }
+
+
+                HashSet<string> hadIndex = new HashSet<string>();
+
+                // next cleanup old indexes
+                // Match by both hypertable and friendly index name to allow multiple indexes on the same hypertable
+                // Track existing in hadIndex so we dont have to check later
+                foreach (EphemeralIndexingService.EphemeralIndexingOptions activeOpts in _options.Options.Where(r => r.Enabled))
+                {
+                    // Get indices, skipping any removed
+                    IEnumerable<EphemeralIndexing.ActiveIndex> matching =
+                        _allIndices.Values.Where(t => 
+                            String.Equals(t.TableName, activeOpts.Hypertable, StringComparison.OrdinalIgnoreCase) &&
+                            !String.IsNullOrEmpty(t.IndexName) &&
+                            t.IndexName.IndexOf(activeOpts.IndexName, StringComparison.OrdinalIgnoreCase) != -1);
+
+                  
+                    foreach (EphemeralIndexing.ActiveIndex index in matching.ToArray())
+                    {
+                        DateTime newest = EphemeralIndexing.IndexHelper.GetNewestDate(connectionString, index.ChunkName, activeOpts.TimeColumn);
+                        if (newest.Add(activeOpts.AgeToIndex) < DateTime.UtcNow)
+                        {
+                            _logger.LogInformation("Chunk " + index.ChunkName + " age exceeds indexing window, dropping: " + index.IndexName);
+
+                            EphemeralIndexing.IndexHelper.DropIndex(connectionString, index.IndexName);
+
+                            _indices.Remove(index);
+                        }
+                        else
+                        {
+                            _logger.LogTrace("Chunk " + index.ChunkName + " already indexed by: " + index.IndexName);
+                            hadIndex.Add(index.ChunkName);
+                        }
+                    }
+                }
+
 
                 // Walk any active index, and see if we've indexed all the recent chunks
-                // This will also remove indices that have exceeded our age time.
-
-                // TODO: Support removing when disabled/missing? Not hard to get all dynamic indexes and verify
-                foreach(EphemeralIndexingOptions activeOpts in _options.Options.Where(e => e.Enabled))
+                foreach (EphemeralIndexingOptions activeOpts in _options.Options.Where(e => e.Enabled))
                 {
                     try
                     {
@@ -151,29 +207,7 @@ namespace EphemeralIndexingService
 
                         _logger.LogInformation("Checking indexing for: " + activeOpts.Hypertable);
 
-                        // First, cleanup any old indices
-                        // Match by both hypertable and friendly index name to allow multiple indexes on the same hypertable
-                        IEnumerable<EphemeralIndexing.ActiveIndex> matching = _indices.Where(t => String.Equals(t.TableName, activeOpts.Hypertable, StringComparison.OrdinalIgnoreCase) &&
-                            t.IndexName.IndexOf(activeOpts.IndexName, StringComparison.OrdinalIgnoreCase) != -1);
-                        HashSet<string> hadIndex = new HashSet<string>();
-                        foreach(EphemeralIndexing.ActiveIndex index in matching.ToArray())
-                        {
-                            DateTime newest = EphemeralIndexing.IndexHelper.GetNewestDate(connectionString, index.ChunkName, activeOpts.TimeColumn);
-                            if(newest.Add(activeOpts.AgeToIndex) < DateTime.UtcNow)
-                            {
-                                _logger.LogInformation("Chunk " + index.ChunkName + " age exceeds indexing window, dropping: " + index.IndexName);
-
-                                EphemeralIndexing.IndexHelper.DropIndex(connectionString, index.IndexName);
-
-                                _indices.Remove(index);
-                            }
-                            else
-                            {
-                                _logger.LogTrace("Chunk " + index.ChunkName + " already indexed by: " + index.IndexName);
-                                hadIndex.Add(index.ChunkName);
-                            }
-                        }
-
+                     
 
                         // Setup new index
                         List<string> chunks = EphemeralIndexing.IndexHelper.GetChunks(connectionString, activeOpts.Hypertable);

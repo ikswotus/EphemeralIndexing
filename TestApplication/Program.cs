@@ -18,11 +18,27 @@ namespace TestApplication
         static void Main(string[] args)
         {
 
-           //Demo();
+            ILogger<EphemeralIndexingService.IndexingService> logger = GetLogger();
 
-            Demo(1);
+            Demo(logger);
+
+            logger.LogInformation("Demo complete - Press key to run Demo() again");
+            Console.ReadKey();
+
+            Demo(logger);
+
+            logger.LogInformation("Demo complete - Press key to run Demo(1)");
+            Console.ReadKey();
+
+            Demo(logger, 1);
+
+            logger.LogInformation("Demo complete - Press key to run Demo(8,true)");
+            Console.ReadKey();
+            
+            Demo(logger, 8, true);
 
 
+            logger.LogInformation("Finished");
 
             //Demo();
 
@@ -61,30 +77,8 @@ namespace TestApplication
 
         }
 
-
-        public static void Demo(int hours = 4)
+        public static ILogger<EphemeralIndexingService.IndexingService> GetLogger()
         {
-            // Create: TODO: Set connection string
-            string connStr = System.IO.File.ReadAllText(@"E:\conn.txt");
-
-            EphemeralIndexingService.ConfiguredOptions options = new ConfiguredOptions();
-            options.ConnectionString = connStr;
-            options.Options.Add(new EphemeralIndexingOptions()
-            {
-                AgeToIndex = TimeSpan.FromHours(hours),
-                Enabled = true,
-                Hypertable = "test.ephemeral_demo",
-                IndexCriteria = "sample_time,metric_name",
-                IndexName = "metric_time",
-                Predicate = null,
-                TimeColumn = "sample_time"
-            });
-
-            // Save so service can find it
-            EphemeralIndexingService.OptionsHelper.ToFile(options, System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "options.xml"));
-
-          
-
             // All this just to log to the console....thanks .net 5
             var configureNamedOptions = new ConfigureNamedOptions<ConsoleLoggerOptions>("", null);
             var optionsFactory = new OptionsFactory<ConsoleLoggerOptions>(new[] { configureNamedOptions }, Enumerable.Empty<IPostConfigureOptions<ConsoleLoggerOptions>>());
@@ -97,6 +91,37 @@ namespace TestApplication
             ////ILoggerFactory loggerFactory = new LoggerFactory().AddConsole();
 
             ILogger<EphemeralIndexingService.IndexingService> logger = loggerFactory.CreateLogger<EphemeralIndexingService.IndexingService>();
+            
+            return logger;
+        }
+
+        public static void Demo(ILogger<EphemeralIndexingService.IndexingService> logger, int hours = 4, bool clear = false)
+        {
+            // Create: TODO: Set connection string
+            string connStr = System.IO.File.ReadAllText(@"E:\conn.txt");
+
+            EphemeralIndexingService.ConfiguredOptions options = new ConfiguredOptions();
+            options.ConnectionString = connStr;
+
+            if (!clear)
+            {
+                options.Options.Add(new EphemeralIndexingOptions()
+                {
+                    AgeToIndex = TimeSpan.FromHours(hours),
+                    Enabled = true,
+                    Hypertable = "test.ephemeral_demo",
+                    IndexCriteria = "sample_time,metric_name",
+                    IndexName = "metric_time",
+                    Predicate = null,
+                    TimeColumn = "sample_time"
+                });
+            }
+            // Save so service can find it
+            EphemeralIndexingService.OptionsHelper.ToFile(options, System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "options.xml"));
+
+          
+
+
             //  logger.LogInformation("This is log message.");
 
 
