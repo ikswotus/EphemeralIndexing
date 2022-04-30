@@ -21,7 +21,7 @@ We could create an index:
 create index _test_index_full_sample_data
 on test.sample_data (sample_time, metric_name);
 ```
-However, this will index ALL data. If we keep weeks/months/years of data, the space required for the index will be significant. If the table is typically only queried by grafana for a last-24hour view, this is a lot of wasted space. To avoid that, we can create the index directly on the chunk instead:
+However, this will index ALL data. If we keep weeks/months/years of data, the space required for the index will be significant. If the table is typically only queried by grafana for a last-24hour view, we can avoid having unused indexes taking up space by creating the index directly on recent chunks instead:
 
 ```
 create index _test_index_full_sample_data
