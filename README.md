@@ -2,7 +2,7 @@
  
 Provides a simple windows service to manage creating temporary indexes on individual chunks of a timescale hypertable (https://www.timescale.com/)
 
-The main motivation for this is to save disk space by avoiding indexing an entire table, and instead only index recent data. For data that is mainly queried by a dashboard display and only looks at a small time window, we can benefit greatly by having an index
+The main motivation for this is to save disk space by avoiding indexing an entire table, and instead only index recent data. Mostly this is intedned for for data that is mainly queried by a dashboard display and only looks at a small time window. Any other use cases may not benefit much.
 
 Given the table:
 ```
@@ -52,9 +52,9 @@ Optional:
 
 To use it, we will need some simple test data. 
 
-NOTE: This is intended only as a small, simple example to create multiple chunks to demonstrate that only recent chunks will get the index, we are not trying to prove indexes are useful with this demo.  Using a 15 minute interval when generating test data will only insert ~33 rows per query, so SELECT queries likely will not even use the ephemeral indexes (and possibly not even the hypertable index on time).
+NOTE: This is intended only as a small, simple example to create multiple chunks to demonstrate that only recent chunks will get the index, we are not trying to prove indexes are useful with this demo.  Using a 15 minute interval when generating test data will only insert ~33 rows per query, so EXPLAINing these test SELECT queries likely will show that our index is not even used - possibly not even the hypetable's time index.
 
-Note: Other tables can be used for testing, but the options in Demo() will need to be modified
+Note: Obviously any other tables can be used for testing, but the options in Demo() will need to be modified
 to reflect any table/column name changes.
 
 ```CREATE TABLE test.ephemeral_demo
@@ -145,7 +145,7 @@ select concat('_timescaledb_internal', '.', tablename), indexname from pg_indexe
 
 
 #TODO
-* Is there a way to know when a new chunk is created without polling the database to get a chunk list? If we could be triggered by postgres/timescale directly, the index could be created (and old ones dropped) before any data was inserted.
+* Is there a way to know when a new chunk is created without polling the database to get a chunk list? Ideally if we could be triggered by postgres/timescale directly - something like an 'OnChunkCreated()' trigger - the index could be created (and old ones dropped) before any data was inserted and avoid hiccups caused by creating the index.
 * Separate service/library functions? Logger can be passed into indexing methods to de-couple from the actual windows service implementation.
 * Helpers to retrieve stats on indexes/indexed chunks: Total #, creation time, size on disk.
 * Option to allow configurable tablespace for index creation.
