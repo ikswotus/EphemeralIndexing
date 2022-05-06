@@ -144,7 +144,7 @@ select concat('_timescaledb_internal', '.', tablename), indexname from pg_indexe
 |_timescaledb_internal._hyper_9_24_chunk|ephemeral_hyper_metric_time__hyper_9_24_chunk|
 
 
-#TODO
+### TODO
 * Is there a way to know when a new chunk is created without polling the database to get a chunk list? Ideally if we could be triggered by postgres/timescale directly - something like an 'OnChunkCreated()' trigger - the index could be created (and old ones dropped) before any data was inserted and avoid hiccups caused by creating the index.
 * Separate service/library functions? Logger can be passed into indexing methods to de-couple from the actual windows service implementation.
 * Helpers to retrieve stats on indexes/indexed chunks: Total #, creation time, size on disk.
