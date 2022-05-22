@@ -2,7 +2,7 @@
  
 Provides a simple windows service to manage creating temporary indexes on individual chunks of a timescale hypertable (https://www.timescale.com/)
 
-The main motivation for this is to save disk space by avoiding indexing an entire table, and instead only index recent data. Mostly this is intedned for for data that is mainly queried by a dashboard display and only looks at a small time window. Any other use cases may not benefit much.
+The main motivation for this is to save disk space by avoiding indexing an entire table, and instead only index recent data. Mostly this is intended for data that is mainly queried by a dashboard display and only looks at a small time window. Any other use cases may not benefit much.
 
 Given the table:
 ```
